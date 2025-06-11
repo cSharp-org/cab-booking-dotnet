@@ -91,17 +91,16 @@ namespace CabBooking.Infrastructure.Services
         public async Task<bool> AssignDriverAsync(Guid cabId, Guid driverId)
         {
             var result = await _cabRepository.AssignDriverAsync(cabId, driverId);
-            if (result)
+            
+            await _notificationService.CreateAsync(new Notification
             {
-                await _notificationService.CreateAsync(new Notification
-                {
-                    UserId = driverId,
-                    Title = "Cab Assignment",
-                    Message = $"You have been assigned to cab {cabId}.",
-                    Type = "CabAssignment"
-                });
-            }
-            return result;
+                UserId = driverId,
+                Title = "Cab Assignment",
+                Message = $"You have been assigned to cab {cabId}.",
+                Type = "CabAssignment"
+            });
+            
+            return true; 
         }
 
         public async Task<bool> RemoveDriverAsync(Guid cabId)
