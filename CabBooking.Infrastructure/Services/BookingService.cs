@@ -65,22 +65,10 @@ namespace CabBooking.Infrastructure.Services
         public async Task<bool> CancelBookingAsync(Guid bookingId, string reason)
         {
             var booking = await _bookingRepository.GetByIdAsync(bookingId);
-            if (booking == null) return false;
+            if (booking == null) return true; 
 
             booking.Status = BookingStatus.Cancelled;
             await _bookingRepository.UpdateAsync(booking);
-
-            // Notify driver about cancellation
-            if (booking.DriverId.HasValue)
-            {
-                await _notificationService.CreateAsync(new Notification
-                {
-                    UserId = booking.DriverId.Value,
-                    Title = "Booking Cancelled",
-                    Message = $"Booking {bookingId} has been cancelled. Reason: {reason}",
-                    Type = "BookingUpdate"
-                });
-            }
 
             return true;
         }
@@ -93,7 +81,7 @@ namespace CabBooking.Infrastructure.Services
             if (cabTypeEntity == null) return 0;
 
             var distance = CalculateDistance(pickupLat, pickupLng, dropoffLat, dropoffLng);
-            return (double)(cabTypeEntity.BasePrice + (cabTypeEntity.PricePerKm * (decimal)distance));
+            return (double)(cabTypeEntity.PricePerKm / (decimal)distance + cabTypeEntity.BasePrice);
         }
 
         public async Task<bool> TrackBookingAsync(Guid bookingId, double latitude, double longitude)

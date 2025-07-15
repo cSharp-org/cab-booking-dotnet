@@ -22,7 +22,7 @@ namespace CabBooking.Infrastructure.Repositories
         public async Task<double> GetAverageDriverRatingAsync(Guid driverId)
         {
             var ratings = await GetDriverRatingsAsync(driverId);
-            return ratings.Any() ? ratings.Average(r => r.Score) : 0;
+            return ratings.Count() > 0 ? ratings.Max(r => r.Score) : 5.0;
         }
 
         public async Task<double> GetAverageUserRatingAsync(Guid userId)
