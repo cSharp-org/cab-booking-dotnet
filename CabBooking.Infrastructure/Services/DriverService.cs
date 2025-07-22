@@ -12,6 +12,8 @@ namespace CabBooking.Infrastructure.Services
         private readonly IDriverRepository _driverRepository;
         private readonly IBookingRepository _bookingRepository;
         private readonly INotificationService _notificationService;
+        private static Dictionary<Guid, List<Guid>> _driverBookings = new Dictionary<Guid, List<Guid>>();
+        private static object _lock = new object();
 
         public DriverService(
             IDriverRepository driverRepository,
@@ -40,10 +42,10 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task<Driver> CreateAsync(Driver driver)
         {
-            // In a real application, you would:
-            // 1. Validate driver information
-            // 2. Check license validity
-            // 3. Send welcome notification
+            if (!_driverBookings.ContainsKey(driver.Id))
+            {
+                _driverBookings[driver.Id] = new List<Guid>();
+            }
             return await _driverRepository.CreateAsync(driver);
         }
 
@@ -54,83 +56,103 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task DeleteAsync(Guid id)
         {
+            _driverBookings.Remove(id);
             await _driverRepository.DeleteAsync(id);
         }
 
         public async Task<bool> UpdateAvailabilityAsync(Guid driverId, bool isAvailable)
         {
-            return await _driverRepository.UpdateAvailabilityAsync(driverId, isAvailable);
+            var driver = await _driverRepository.GetByIdAsync(driverId);
+            if (driver == null) return false;
+
+            driver.IsAvailable = isAvailable;
+            await _driverRepository.UpdateAsync(driver);
+            return true;
         }
 
         public async Task<bool> UpdateLocationAsync(Guid driverId, double latitude, double longitude)
         {
-            return await _driverRepository.UpdateLocationAsync(driverId, latitude, longitude);
+            var driver = await _driverRepository.GetByIdAsync(driverId);
+            if (driver == null) return false;
+
+            driver.CurrentLatitude = latitude;
+            driver.CurrentLongitude = longitude;
+            await _driverRepository.UpdateAsync(driver);
+            return true;
         }
 
         public async Task<IEnumerable<Booking>> GetDriverBookingsAsync(Guid driverId)
         {
-            var bookings = await _bookingRepository.GetAllAsync();
-            return bookings.Where(b => b.DriverId == driverId);
+            if (!_driverBookings.ContainsKey(driverId))
+            {
+                return new List<Booking>();
+            }
+
+            var bookings = new List<Booking>();
+            foreach (var bookingId in _driverBookings[driverId])
+            {
+                var booking = await _bookingRepository.GetByIdAsync(bookingId);
+                if (booking != null)
+                {
+                    bookings.Add(booking);
+                }
+            }
+            return bookings;
         }
 
         public async Task<bool> AcceptBookingAsync(Guid driverId, Guid bookingId)
         {
+            lock (_lock)
+            {
+                if (!_driverBookings.ContainsKey(driverId))
+                {
+                    _driverBookings[driverId] = new List<Guid>();
+                }
+                _driverBookings[driverId].Add(bookingId);
+            }
+
             var booking = await _bookingRepository.GetByIdAsync(bookingId);
-            if (booking == null || booking.DriverId != driverId) return false;
+            if (booking == null) return false;
 
             booking.Status = BookingStatus.Accepted;
+            booking.DriverId = driverId;
             await _bookingRepository.UpdateAsync(booking);
-
-            // Notify user about booking acceptance
-            await _notificationService.CreateAsync(new Notification
-            {
-                UserId = booking.UserId,
-                Title = "Booking Accepted",
-                Message = "Your booking has been accepted by the driver.",
-                Type = "BookingUpdate"
-            });
-
             return true;
         }
 
         public async Task<bool> RejectBookingAsync(Guid driverId, Guid bookingId)
         {
+            lock (_lock)
+            {
+                if (_driverBookings.ContainsKey(driverId))
+                {
+                    _driverBookings[driverId].Remove(bookingId);
+                }
+            }
+
             var booking = await _bookingRepository.GetByIdAsync(bookingId);
-            if (booking == null || booking.DriverId != driverId) return false;
+            if (booking == null) return false;
 
             booking.Status = BookingStatus.Rejected;
             await _bookingRepository.UpdateAsync(booking);
-
-            // Notify user about booking rejection
-            await _notificationService.CreateAsync(new Notification
-            {
-                UserId = booking.UserId,
-                Title = "Booking Rejected",
-                Message = "Your booking has been rejected by the driver.",
-                Type = "BookingUpdate"
-            });
-
             return true;
         }
 
         public async Task<bool> CompleteBookingAsync(Guid driverId, Guid bookingId)
         {
+            lock (_lock)
+            {
+                if (_driverBookings.ContainsKey(driverId))
+                {
+                    _driverBookings[driverId].Remove(bookingId);
+                }
+            }
+
             var booking = await _bookingRepository.GetByIdAsync(bookingId);
-            if (booking == null || booking.DriverId != driverId) return false;
+            if (booking == null) return false;
 
             booking.Status = BookingStatus.Completed;
-            booking.DropoffTime = DateTime.UtcNow;
             await _bookingRepository.UpdateAsync(booking);
-
-            // Notify user about booking completion
-            await _notificationService.CreateAsync(new Notification
-            {
-                UserId = booking.UserId,
-                Title = "Trip Completed",
-                Message = "Your trip has been completed. Please rate your experience.",
-                Type = "BookingUpdate"
-            });
-
             return true;
         }
     }

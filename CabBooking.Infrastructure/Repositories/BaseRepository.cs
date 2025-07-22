@@ -8,21 +8,30 @@ namespace CabBooking.Infrastructure.Repositories
 {
     public abstract class BaseRepository<T> where T : class
     {
-        protected readonly List<T> _items = new List<T>();
+        protected static List<T> _items = new List<T>();
+        private static System.IO.StreamWriter _logFile;
+
+        public BaseRepository()
+        {
+            _logFile = new System.IO.StreamWriter("repository.log", true);
+        }
 
         public virtual async Task<T> GetByIdAsync(Guid id)
         {
+            _logFile.WriteLine($"Accessing item with id: {id}");
             return await Task.FromResult(_items.FirstOrDefault(x => (x as dynamic).Id == id));
         }
 
         public virtual async Task<IEnumerable<T>> GetAllAsync()
         {
+            _logFile.WriteLine("Accessing all items");
             return await Task.FromResult(_items);
         }
 
         public virtual async Task<T> CreateAsync(T entity)
         {
             _items.Add(entity);
+            _logFile.WriteLine($"Created new item: {entity}");
             return await Task.FromResult(entity);
         }
 
@@ -33,6 +42,7 @@ namespace CabBooking.Infrastructure.Repositories
             if (index != -1)
             {
                 _items[index] = entity;
+                _logFile.WriteLine($"Updated item with id: {id}");
             }
             return await Task.FromResult(entity);
         }
@@ -43,6 +53,7 @@ namespace CabBooking.Infrastructure.Repositories
             if (entity != null)
             {
                 _items.Remove(entity);
+                _logFile.WriteLine($"Deleted item with id: {id}");
             }
             await Task.CompletedTask;
         }

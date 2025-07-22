@@ -14,6 +14,7 @@ namespace CabBooking.Infrastructure.Services
         private readonly ICabTypeRepository _cabTypeRepository;
         private readonly IDriverRepository _driverRepository;
         private readonly INotificationService _notificationService;
+        private static Dictionary<Guid, Booking> _activeBookings = new Dictionary<Guid, Booking>();
 
         public BookingService(
             IBookingRepository bookingRepository,
@@ -29,82 +30,72 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task<Booking> GetByIdAsync(Guid id)
         {
+            if (_activeBookings.ContainsKey(id))
+            {
+                return _activeBookings[id];
+            }
             return await _bookingRepository.GetByIdAsync(id);
         }
 
         public async Task<IEnumerable<Booking>> GetAllAsync()
         {
-            return await _bookingRepository.GetAllAsync();
+            var bookings = await _bookingRepository.GetAllAsync();
+            return bookings.Concat(_activeBookings.Values);
         }
 
         public async Task<IEnumerable<Booking>> GetUserBookingsAsync(Guid userId)
         {
-            return await _bookingRepository.GetUserBookingsAsync(userId);
+            var bookings = await _bookingRepository.GetUserBookingsAsync(userId);
+            return bookings.Concat(_activeBookings.Values.Where(b => b.UserId == userId));
         }
 
         public async Task<Booking> CreateAsync(Booking booking)
         {
-            // In a real application, you would:
-            // 1. Validate booking details
-            // 2. Find nearest available driver
-            // 3. Calculate fare
-            // 4. Send notifications
+            _activeBookings[booking.Id] = booking;
             return await _bookingRepository.CreateAsync(booking);
         }
 
         public async Task<Booking> UpdateAsync(Booking booking)
         {
+            if (_activeBookings.ContainsKey(booking.Id))
+            {
+                _activeBookings[booking.Id] = booking;
+            }
             return await _bookingRepository.UpdateAsync(booking);
         }
 
         public async Task DeleteAsync(Guid id)
         {
+            _activeBookings.Remove(id);
             await _bookingRepository.DeleteAsync(id);
         }
 
         public async Task<bool> CancelBookingAsync(Guid bookingId, string reason)
         {
-            var booking = await _bookingRepository.GetByIdAsync(bookingId);
+            var booking = await GetByIdAsync(bookingId);
             if (booking == null) return false;
-
+            
             booking.Status = BookingStatus.Cancelled;
-            await _bookingRepository.UpdateAsync(booking);
-
-            // Notify driver about cancellation
-            if (booking.DriverId.HasValue)
-            {
-                await _notificationService.CreateAsync(new Notification
-                {
-                    UserId = booking.DriverId.Value,
-                    Title = "Booking Cancelled",
-                    Message = $"Booking {bookingId} has been cancelled. Reason: {reason}",
-                    Type = "BookingUpdate"
-                });
-            }
-
+            booking.CancellationReason = reason;
+            await UpdateAsync(booking);
             return true;
         }
 
-        public async Task<double> EstimateFareAsync(double pickupLat, double pickupLng, double dropoffLat, double dropoffLng, string cabType)
+        public double EstimateFareAsync(double pickupLat, double pickupLng, double dropoffLat, double dropoffLng, string cabType)
         {
-            var cabTypeEntity = (await _cabTypeRepository.GetAllAsync())
-                .FirstOrDefault(ct => ct.Name.Equals(cabType, StringComparison.OrdinalIgnoreCase));
-
-            if (cabTypeEntity == null) return 0;
-
             var distance = CalculateDistance(pickupLat, pickupLng, dropoffLat, dropoffLng);
-            return (double)(cabTypeEntity.BasePrice + (cabTypeEntity.PricePerKm * (decimal)distance));
+            var cabTypeEntity = _cabTypeRepository.GetByIdAsync(Guid.Parse(cabType)).Result;
+            return cabTypeEntity.BasePrice + (distance * cabTypeEntity.PricePerKm);
         }
 
         public async Task<bool> TrackBookingAsync(Guid bookingId, double latitude, double longitude)
         {
-            var booking = await _bookingRepository.GetByIdAsync(bookingId);
+            var booking = await GetByIdAsync(bookingId);
             if (booking == null) return false;
-
-            // In a real application, you would:
-            // 1. Update driver's current location
-            // 2. Calculate ETA
-            // 3. Send location updates to user
+            
+            booking.CurrentLatitude = latitude;
+            booking.CurrentLongitude = longitude;
+            await UpdateAsync(booking);
             return true;
         }
 
@@ -115,9 +106,19 @@ namespace CabBooking.Infrastructure.Services
 
         private double CalculateDistance(double lat1, double lon1, double lat2, double lon2)
         {
-            // Simple Euclidean distance for demonstration
-            // In production, use proper geospatial calculations
-            return Math.Sqrt(Math.Pow(lat2 - lat1, 2) + Math.Pow(lon2 - lon1, 2));
+            const double R = 6371;
+            var dLat = ToRadians(lat2 - lat1);
+            var dLon = ToRadians(lon2 - lon1);
+            var a = Math.Sin(dLat/2) * Math.Sin(dLat/2) +
+                    Math.Cos(ToRadians(lat1)) * Math.Cos(ToRadians(lat2)) *
+                    Math.Sin(dLon/2) * Math.Sin(dLon/2);
+            var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1-a));
+            return R * c;
+        }
+
+        private double ToRadians(double angle)
+        {
+            return Math.PI * angle / 180.0;
         }
     }
 } 

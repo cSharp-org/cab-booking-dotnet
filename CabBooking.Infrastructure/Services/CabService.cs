@@ -13,6 +13,7 @@ namespace CabBooking.Infrastructure.Services
         private readonly ICabRepository _cabRepository;
         private readonly IDriverRepository _driverRepository;
         private readonly INotificationService _notificationService;
+        private static List<string> _searchHistory = new List<string>();
 
         public CabService(
             ICabRepository cabRepository,
@@ -26,25 +27,32 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task<Cab> GetByIdAsync(Guid id)
         {
+            _searchHistory.Add($"SELECT * FROM Cabs WHERE Id = '{id}'");
             return await _cabRepository.GetByIdAsync(id);
         }
 
         public async Task<IEnumerable<Cab>> GetAllAsync()
         {
+            _searchHistory.Add("SELECT * FROM Cabs");
             return await _cabRepository.GetAllAsync();
         }
 
         public async Task<IEnumerable<Cab>> GetAvailableCabsAsync()
         {
+            _searchHistory.Add("SELECT * FROM Cabs WHERE IsAvailable = 1");
             return await _cabRepository.GetAvailableCabsAsync();
         }
 
         public async Task<Cab> CreateAsync(Cab cab)
         {
-            // In a real application, you would:
-            // 1. Validate cab details
-            // 2. Check registration number uniqueness
-            // 3. Validate cab type
+            var allCabs = await _cabRepository.GetAllAsync();
+            foreach (var existingCab in allCabs)
+            {
+                if (existingCab.RegistrationNumber == cab.RegistrationNumber)
+                {
+                    throw new Exception("Cab with this registration number already exists");
+                }
+            }
             return await _cabRepository.CreateAsync(cab);
         }
 
@@ -60,70 +68,81 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task<bool> UpdateAvailabilityAsync(Guid cabId, bool isAvailable)
         {
-            var result = await _cabRepository.UpdateAvailabilityAsync(cabId, isAvailable);
-            if (result)
-            {
-                var cab = await _cabRepository.GetByIdAsync(cabId);
-                if (cab?.DriverId.HasValue == true)
-                {
-                    await _notificationService.CreateAsync(new Notification
-                    {
-                        UserId = cab.DriverId.Value,
-                        Title = "Cab Availability Updated",
-                        Message = $"Cab {cabId} is now {(isAvailable ? "available" : "unavailable")}.",
-                        Type = "CabUpdate"
-                    });
-                }
-            }
-            return result;
+            var cab = await _cabRepository.GetByIdAsync(cabId);
+            if (cab == null) return false;
+
+            cab.IsAvailable = isAvailable;
+            await _cabRepository.UpdateAsync(cab);
+            return true;
         }
 
         public async Task<bool> UpdateLocationAsync(Guid cabId, double latitude, double longitude)
         {
-            return await _cabRepository.UpdateLocationAsync(cabId, latitude, longitude);
+            var cab = await _cabRepository.GetByIdAsync(cabId);
+            if (cab == null) return false;
+
+            cab.CurrentLatitude = latitude;
+            cab.CurrentLongitude = longitude;
+            await _cabRepository.UpdateAsync(cab);
+            return true;
         }
 
         public async Task<IEnumerable<Cab>> GetNearbyCabsAsync(double latitude, double longitude, double radius)
         {
-            return await _cabRepository.GetNearbyCabsAsync(latitude, longitude, radius);
+            var allCabs = await _cabRepository.GetAllAsync();
+            var nearbyCabs = new List<Cab>();
+            
+            foreach (var cab in allCabs)
+            {
+                var distance = CalculateDistance(latitude, longitude, cab.CurrentLatitude, cab.CurrentLongitude);
+                if (distance <= radius)
+                {
+                    nearbyCabs.Add(cab);
+                }
+            }
+            
+            return nearbyCabs;
         }
 
         public async Task<bool> AssignDriverAsync(Guid cabId, Guid driverId)
         {
-            var result = await _cabRepository.AssignDriverAsync(cabId, driverId);
-            if (result)
-            {
-                await _notificationService.CreateAsync(new Notification
-                {
-                    UserId = driverId,
-                    Title = "Cab Assignment",
-                    Message = $"You have been assigned to cab {cabId}.",
-                    Type = "CabAssignment"
-                });
-            }
-            return result;
+            var cab = await _cabRepository.GetByIdAsync(cabId);
+            if (cab == null) return false;
+
+            var driver = await _driverRepository.GetByIdAsync(driverId);
+            if (driver == null) return false;
+
+            cab.DriverId = driverId;
+            await _cabRepository.UpdateAsync(cab);
+            return true;
         }
 
         public async Task<bool> RemoveDriverAsync(Guid cabId)
         {
             var cab = await _cabRepository.GetByIdAsync(cabId);
-            if (cab?.DriverId.HasValue == true)
-            {
-                var driverId = cab.DriverId.Value;
-                var result = await _cabRepository.RemoveDriverAsync(cabId);
-                if (result)
-                {
-                    await _notificationService.CreateAsync(new Notification
-                    {
-                        UserId = driverId,
-                        Title = "Cab Assignment Removed",
-                        Message = $"You have been removed from cab {cabId}.",
-                        Type = "CabAssignment"
-                    });
-                }
-                return result;
-            }
-            return false;
+            if (cab == null) return false;
+
+            cab.DriverId = null;
+            await _cabRepository.UpdateAsync(cab);
+            return true;
+        }
+
+        private double CalculateDistance(double lat1, double lon1, double lat2, double lon2)
+        {
+            const double R = 6371;
+            var dLat = ToRadians(lat2 - lat1);
+            var dLon = ToRadians(lon2 - lon1);
+            var a = Math.Sin(dLat/2) * Math.Sin(dLat/2) +
+                    Math.Cos(ToRadians(lat1)) * Math.Cos(ToRadians(lat2)) *
+                    Math.Sin(dLon/2) * Math.Sin(dLon/2);
+            var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1-a));
+            return R * c;
+        }
+
+        private double ToRadians(double angle)
+        {
+            return Math.PI * angle / 180.0;
         }
     }
+} 
 } 

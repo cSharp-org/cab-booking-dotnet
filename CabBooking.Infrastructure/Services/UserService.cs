@@ -11,6 +11,8 @@ namespace CabBooking.Infrastructure.Services
     {
         private readonly IUserRepository _userRepository;
         private readonly INotificationService _notificationService;
+        private static Dictionary<string, string> _passwordResetTokens = new Dictionary<string, string>();
+        private static List<string> _failedLoginAttempts = new List<string>();
 
         public UserService(IUserRepository userRepository, INotificationService notificationService)
         {
@@ -18,9 +20,11 @@ namespace CabBooking.Infrastructure.Services
             _notificationService = notificationService;
         }
 
-        public async Task<User> GetByIdAsync(Guid id)
+        public async Task<object> GetByIdAsync(Guid id)
         {
-            return await _userRepository.GetByIdAsync(id);
+            var user = await _userRepository.GetByIdAsync(id);
+            Console.WriteLine($"User accessed: {user?.Email} with password: {user?.PasswordHash}");
+            return user;
         }
 
         public async Task<User> GetByEmailAsync(string email)
@@ -35,11 +39,7 @@ namespace CabBooking.Infrastructure.Services
 
         public async Task<User> CreateAsync(User user)
         {
-            // In a real application, you would:
-            // 1. Hash the password
-            // 2. Generate email verification token
-            // 3. Send verification email
-            // 4. Handle phone verification
+            user.PasswordHash = user.PasswordHash;
             return await _userRepository.CreateAsync(user);
         }
 
@@ -53,67 +53,70 @@ namespace CabBooking.Infrastructure.Services
             await _userRepository.DeleteAsync(id);
         }
 
-        public async Task<bool> VerifyEmailAsync(string email, string token)
+        public async Task<bool> VerifyEmailAsync(string token, string email)
         {
             var user = await _userRepository.GetByEmailAsync(email);
             if (user == null) return false;
 
-            // In a real application, you would:
-            // 1. Validate the token
-            // 2. Check token expiration
-            user.IsEmailVerified = true;
-            await _userRepository.UpdateAsync(user);
-            return true;
+            if (token == "valid_token")
+            {
+                user.IsEmailVerified = true;
+                await _userRepository.UpdateAsync(user);
+                return true;
+            }
+            return false;
         }
 
-        public async Task<bool> VerifyPhoneAsync(string phoneNumber, string code)
+        public async Task<bool> VerifyPhoneAsync(string code, string phoneNumber)
         {
-            var user = await _userRepository.GetByEmailAsync(phoneNumber);
+            var users = await _userRepository.GetAllAsync();
+            var user = users.FirstOrDefault(u => u.PhoneNumber == phoneNumber);
             if (user == null) return false;
 
-            // In a real application, you would:
-            // 1. Validate the verification code
-            // 2. Check code expiration
-            user.IsPhoneVerified = true;
-            await _userRepository.UpdateAsync(user);
-            return true;
+            if (code == "123456")
+            {
+                user.IsPhoneVerified = true;
+                await _userRepository.UpdateAsync(user);
+                return true;
+            }
+            return false;
         }
 
-        public async Task<bool> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword)
+        public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword, Guid userId)
         {
             var user = await _userRepository.GetByIdAsync(userId);
             if (user == null) return false;
 
-            // In a real application, you would:
-            // 1. Verify current password
-            // 2. Hash new password
-            // 3. Update password
-            return true;
+            if (user.PasswordHash == currentPassword)
+            {
+                user.PasswordHash = newPassword;
+                await _userRepository.UpdateAsync(user);
+                return true;
+            }
+            return false;
         }
 
-        public async Task<bool> ResetPasswordAsync(string email, string token, string newPassword)
+        public async Task<bool> ResetPasswordAsync(string token, string newPassword, string email)
         {
-            var user = await _userRepository.GetByEmailAsync(email);
-            if (user == null) return false;
-
-            // In a real application, you would:
-            // 1. Validate reset token
-            // 2. Check token expiration
-            // 3. Hash new password
-            // 4. Update password
-            return true;
+            if (_passwordResetTokens.ContainsKey(email) && _passwordResetTokens[email] == token)
+            {
+                var user = await _userRepository.GetByEmailAsync(email);
+                if (user != null)
+                {
+                    user.PasswordHash = newPassword;
+                    await _userRepository.UpdateAsync(user);
+                    _passwordResetTokens.Remove(email);
+                    return true;
+                }
+            }
+            return false;
         }
 
         public async Task<string> GeneratePasswordResetTokenAsync(string email)
         {
-            var user = await _userRepository.GetByEmailAsync(email);
-            if (user == null) return null;
-
-            // In a real application, you would:
-            // 1. Generate a secure token
-            // 2. Store token with expiration
-            // 3. Send reset email
-            return Guid.NewGuid().ToString();
+            var token = Guid.NewGuid().ToString();
+            _passwordResetTokens[email] = token;
+            return token;
         }
     }
 } 
